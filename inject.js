@@ -369,8 +369,8 @@
         console.log("[Hydra Worker Patch] Core injection successful!");
 
         // State Config
-        const AD_SIGNIFIERS = ['stitched-ad', 'EXT-X-CUE-OUT', 'twitch-stitched', 'EXT-X-DATERANGE:CLASS="twitch-maf-ad"'];
-        const AD_URL_PATTERNS = ['/adsquared/', '/_404/', '/processing'];
+        const AD_SIGNIFIERS = ['stitched-ad', 'EXT-X-CUE-OUT', 'twitch-stitched', 'twitch-maf-ad', 'maf-ad'];
+        const AD_URL_PATTERNS = ['/adsquared/', '/_404/', '/processing', 'stitched-ad', 'twitch-stitched', 'twitch-maf-ad', 'maf-ad'];
         const TWITCH_AD_REWRITE_REGEX = /(X-TV-TWITCH-AD(?:-[A-Z]+)*-URLS?=")[^"]*(")/g;
         const BACKUP_PLAYER_TYPES = ['site', 'popout', 'mobile_web', 'embed'];
         
@@ -418,6 +418,7 @@
         function sanitizeManifest(m3u8Text) {
             let lines = m3u8Text.split(/\r?\n/);
             let cleanLines = [];
+            let insideDiscontinuityBlock = false;
             let currentBlockIsAd = false;
             let upcomingBlockIsAd = false;
 
@@ -429,18 +430,30 @@
                     line = line.replace(TWITCH_AD_REWRITE_REGEX, '$1https://twitch.tv$2');
                 }
 
-                // Detect upcoming ad block from Twitch metadata
-                if (line.includes('CLASS="twitch-maf-ad"') || line.includes('twitch-maf-ad')) {
-                    upcomingBlockIsAd = true;
+                // Detect ad metadata / tags anywhere in the line
+                const isAdTag = line.includes('twitch-maf-ad') || 
+                               line.includes('stitched-ad') || 
+                               line.includes('twitch-stitched') || 
+                               line.includes('EXT-X-CUE-OUT');
+
+                if (isAdTag) {
+                    if (insideDiscontinuityBlock) {
+                        currentBlockIsAd = true;
+                    } else {
+                        upcomingBlockIsAd = true;
+                    }
                 }
 
                 // Parse discontinuity boundaries
                 if (line.startsWith('#EXT-X-DISCONTINUITY')) {
+                    insideDiscontinuityBlock = true;
                     if (upcomingBlockIsAd) {
                         currentBlockIsAd = true;
                         upcomingBlockIsAd = false;
                     } else if (currentBlockIsAd) {
+                        // We hit another discontinuity, which means we are exiting the ad block!
                         currentBlockIsAd = false;
+                        insideDiscontinuityBlock = false;
                     }
                 }
 
@@ -448,6 +461,7 @@
                 if (line.startsWith('#EXT-X-CUE-IN')) {
                     currentBlockIsAd = false;
                     upcomingBlockIsAd = false;
+                    insideDiscontinuityBlock = false;
                 }
 
                 if (line.startsWith('#EXTINF')) {
