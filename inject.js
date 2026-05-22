@@ -156,6 +156,34 @@
     let lastReloadTime = 0;
     const reloadCooldownMs = 15000;
 
+    function findTwitchPlayer() {
+        try {
+            const containers = document.querySelectorAll('.video-player, [data-a-target="video-player"]');
+            for (const container of containers) {
+                const keys = Object.keys(container);
+                const reactKey = keys.find(k => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+                if (!reactKey) continue;
+                
+                let node = container[reactKey];
+                while (node) {
+                    if (node.memoizedProps?.player) {
+                        return node.memoizedProps.player;
+                    }
+                    if (node.memoizedProps?.mediaPlayer) {
+                        return node.memoizedProps.mediaPlayer;
+                    }
+                    if (node.stateNode?.player) {
+                        return node.stateNode.player;
+                    }
+                    node = node.return;
+                }
+            }
+        } catch (e) {
+            console.error("[Hydra Shield] Error searching React player:", e);
+        }
+        return null;
+    }
+
     function executePlayerRecovery(kind) {
         const now = Date.now();
         if (now - lastReloadTime < reloadCooldownMs) {
@@ -166,21 +194,68 @@
         console.log(`[Hydra Shield] Attempting player reload recovery [Kind: ${kind || 'standard'}]`);
         
         try {
+            const player = findTwitchPlayer();
+            if (player) {
+                console.log("[Hydra Shield] Found React Twitch player instance.");
+                
+                // 1. Try Player reload/refresh methods
+                if (typeof player.reload === 'function') {
+                    console.log("[Hydra Shield] Triggering player.reload().");
+                    player.reload();
+                    return;
+                }
+                
+                if (typeof player.refresh === 'function') {
+                    console.log("[Hydra Shield] Triggering player.refresh().");
+                    player.refresh();
+                    return;
+                }
+
+                if (player.core && typeof player.core.reload === 'function') {
+                    console.log("[Hydra Shield] Triggering player.core.reload().");
+                    player.core.reload();
+                    return;
+                }
+
+                // 2. Try Quality reset fallback to force HLS manifest reload
+                try {
+                    const qualities = typeof player.getQualities === 'function' ? player.getQualities() : [];
+                    const currentQuality = typeof player.getQuality === 'function' ? player.getQuality() : null;
+                    if (currentQuality && qualities.length > 0) {
+                        console.log("[Hydra Shield] Resetting player quality to force manifest refresh:", currentQuality.group);
+                        player.setQuality(currentQuality);
+                        return;
+                    }
+                } catch (qe) {
+                    console.warn("[Hydra Shield] React quality toggle failed:", qe);
+                }
+            }
+        } catch (reactErr) {
+            console.warn("[Hydra Shield] React-level recovery failed, falling back to video kick:", reactErr);
+        }
+
+        // 3. Fallback to safe, non-destructive video element kick
+        try {
             const videoEl = document.querySelector('video');
             if (videoEl) {
+                console.log("[Hydra Shield] Triggering safe HTML5 video playback kick.");
                 videoEl.pause();
-                const originalSrc = videoEl.src;
-                videoEl.src = '';
-                videoEl.load();
+                
+                // Seek back slightly to force the browser MSE buffer to re-request segments at current playback edge
+                const originalTime = videoEl.currentTime;
+                const seekTarget = Math.max(0, originalTime - 0.2);
+                videoEl.currentTime = seekTarget;
+                
                 setTimeout(() => {
-                    videoEl.src = originalSrc;
-                    videoEl.play().catch(e => console.log("[Hydra Shield] Autoplay blocked:", e));
+                    videoEl.play().catch(e => {
+                        console.warn("[Hydra Shield] Autoplay/play kick blocked or failed:", e);
+                    });
                 }, 50);
             } else {
                 console.log("[Hydra Shield] No active video element found to reload.");
             }
         } catch (err) {
-            console.error("[Hydra Shield] Failed to execute reload recovery:", err);
+            console.error("[Hydra Shield] Failed to execute video element reload kick:", err);
         }
     }
 
