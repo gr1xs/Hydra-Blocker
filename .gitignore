@@ -1,0 +1,12 @@
+# Dependency directories
+node_modules/
+
+# Build artifacts and extension packages
+*.zip
+*.crx
+
+# Optional: Uncomment the lines below if you generate icons dynamically 
+# and prefer not to track the built icon assets in git
+# assets/icons/hydra/active/
+# assets/icons/hydra/inactive/
+# assets/icons/hydra/sepia/
