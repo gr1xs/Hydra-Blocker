@@ -238,19 +238,16 @@
         try {
             const videoEl = document.querySelector('video');
             if (videoEl) {
-                console.log("[Hydra Shield] Triggering safe HTML5 video playback kick.");
-                videoEl.pause();
-                
-                // Seek back slightly to force the browser MSE buffer to re-request segments at current playback edge
+                if (videoEl.paused) {
+                    console.log("[Hydra Shield] Video is paused; skipping recovery kick to respect user state.");
+                    return;
+                }
+                console.log("[Hydra Shield] Triggering safe HTML5 video playback seek kick.");
+                // Seek back slightly to force the browser MSE buffer to re-request segments at current playback edge.
+                // Since the video is already playing, we do not need to call pause() or play(), avoiding autoplay restrictions.
                 const originalTime = videoEl.currentTime;
                 const seekTarget = Math.max(0, originalTime - 0.2);
                 videoEl.currentTime = seekTarget;
-                
-                setTimeout(() => {
-                    videoEl.play().catch(e => {
-                        console.warn("[Hydra Shield] Autoplay/play kick blocked or failed:", e);
-                    });
-                }, 50);
             } else {
                 console.log("[Hydra Shield] No active video element found to reload.");
             }
