@@ -125,9 +125,12 @@
 
             const statsText = hydraBadgeElement.querySelector('#hydra-stats-text');
             if (hasAds) {
-                const secondsSaved = (strippedCount || 0) * 2;
-                const method = backupType ? `Alternative Stream (${backupType})` : 'Segment Stripping';
-                statsText.textContent = `Blocked ${strippedCount} ads • Saved ${secondsSaved}s (${method})`;
+                if (backupType) {
+                    statsText.textContent = `Bypassing ads via Alternative Stream (${backupType})`;
+                } else {
+                    const secondsSaved = (strippedCount || 0) * 2;
+                    statsText.textContent = `Blocked ${strippedCount} ads • Saved ${secondsSaved}s (Segment Stripping)`;
+                }
                 
                 // Add visible class
                 setTimeout(() => {
@@ -408,7 +411,62 @@
         }
 
         function hasAdsInManifest(m3u8Text) {
-            return AD_SIGNIFIERS.some(s => m3u8Text.includes(s));
+            let lines = m3u8Text.split(/\r?\n/);
+            let insideDiscontinuityBlock = false;
+            let currentBlockIsAd = false;
+            let upcomingBlockIsAd = false;
+
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i];
+
+                // Detect ad metadata / tags anywhere in the line
+                const isAdTag = line.includes('twitch-maf-ad') || 
+                               line.includes('stitched-ad') || 
+                               line.includes('twitch-stitched') || 
+                               line.includes('EXT-X-CUE-OUT');
+
+                if (isAdTag) {
+                    if (insideDiscontinuityBlock) {
+                        currentBlockIsAd = true;
+                    } else {
+                        upcomingBlockIsAd = true;
+                    }
+                }
+
+                // Parse discontinuity boundaries
+                if (line.startsWith('#EXT-X-DISCONTINUITY')) {
+                    insideDiscontinuityBlock = true;
+                    if (upcomingBlockIsAd) {
+                        currentBlockIsAd = true;
+                        upcomingBlockIsAd = false;
+                    } else if (currentBlockIsAd) {
+                        currentBlockIsAd = false;
+                        insideDiscontinuityBlock = false;
+                    }
+                }
+
+                // Reset state on cue-in tag
+                if (line.startsWith('#EXT-X-CUE-IN')) {
+                    currentBlockIsAd = false;
+                    upcomingBlockIsAd = false;
+                    insideDiscontinuityBlock = false;
+                }
+
+                if (line.startsWith('#EXTINF')) {
+                    const nextLine = lines[i + 1] || '';
+                    const matchesAdPattern = AD_URL_PATTERNS.some(pat => nextLine.includes(pat));
+                    if (currentBlockIsAd || matchesAdPattern) {
+                        return true;
+                    }
+                } else if (line.startsWith('#EXT-X-TWITCH-PREFETCH:') || line.startsWith('#EXT-X-PRELOAD-HINT:')) {
+                    const matchesAdPattern = AD_URL_PATTERNS.some(pat => line.includes(pat));
+                    if (currentBlockIsAd || matchesAdPattern) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         // Dynamic Manifest Ad Segment Stripper
